@@ -1,0 +1,45 @@
+name: 'Build and push'
+description: 'Build and push Docker image to GCP'
+inputs:
+  key:
+    description: 'GCP service key base64 encoded'
+    required: true
+  serviceName:
+    description: 'name of the service'
+    required: true
+  region:
+    description: 'GCP region'
+    required: false
+    default: 'europe-west4'
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: nf-artifact-repositories
+    - name: build and push docker image
+      shell: bash
+      env:
+        GCP_REGION: ${{ inputs.region }}
+      run: |
+        echo "Authenticate for docker"
+        export BASE_REPO=${GCP_REGION}-docker.pkg.dev
+        export CONTAINER_REPO=${BASE_REPO}/nf-artifact-repositories/${GCP_NAME}
+        echo "Authenticating with Google Cloud for project nf-artifact-repositories and docker '${BASE_REPO}'"
+        echo ${{ inputs.key }} | base64 --decode > ${HOME}/gcloud-service-key.json
+        gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
+        gcloud auth configure-docker --quiet $BASE_REPO
+        echo "Build and push Docker images"
+        export DOCKER_BUILDKIT=1
+        export IMG="${CONTAINER_REPO}/all:${{ github.sha }}"
+        
+        if ! gcloud container images describe $IMG > /dev/null 2>&1; then
+         # docker build -t "${GCP_NAME}" --ssh default .
+        # Pass the SSH agent socket to docker build
+          docker build -t "${GCP_NAME}" --ssh default .
+          docker tag "${GCP_NAME}" "$IMG"
+          docker push "$IMG"
+        fi  
+      
+
