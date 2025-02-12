@@ -22,6 +22,7 @@ runs:
       shell: bash
       env:
         GCP_REGION: ${{ inputs.region }}
+        GCP_NAME: ${{ inputs.serviceName }}
       run: |
         echo "Authenticate for docker"
         export BASE_REPO=${GCP_REGION}-docker.pkg.dev
