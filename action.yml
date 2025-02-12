@@ -34,6 +34,7 @@ runs:
         echo "Build and push Docker images"
         export DOCKER_BUILDKIT=1
         export IMG="${CONTAINER_REPO}/all:${{ github.sha }}"
+        echo "push new image $IMG"
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
          # docker build -t "${GCP_NAME}" --ssh default .
