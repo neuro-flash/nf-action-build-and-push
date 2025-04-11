@@ -11,6 +11,10 @@ inputs:
     description: 'GCP region'
     required: false
     default: 'europe-west4'
+  dockerfile:
+    description: 'Relative path to the dockerfile; default: ./Dockerfile'
+    required: false
+    default: './Dockerfile'
 runs:
   using: "composite"
   steps:
@@ -37,9 +41,7 @@ runs:
         echo "push new image $IMG"
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
-         # docker build -t "${GCP_NAME}" --ssh default .
-        # Pass the SSH agent socket to docker build
-          docker build -t "${GCP_NAME}" --ssh default .
+          docker build -t "${GCP_NAME}" --ssh default -f ${{ inputs.dockerfile }}
           docker tag "${GCP_NAME}" "$IMG"
           docker push "$IMG"
         fi  
