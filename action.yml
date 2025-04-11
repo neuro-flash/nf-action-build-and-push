@@ -15,6 +15,10 @@ inputs:
     description: 'Relative path to the dockerfile; default: ./Dockerfile'
     required: false
     default: './Dockerfile'
+  tag:
+    description: 'Tag for the docker image; default: all'
+    required: false
+    default: 'all'
 runs:
   using: "composite"
   steps:
@@ -37,7 +41,7 @@ runs:
         gcloud auth configure-docker --quiet $BASE_REPO
         echo "Build and push Docker images"
         export DOCKER_BUILDKIT=1
-        export IMG="${CONTAINER_REPO}/all:${{ github.sha }}"
+        export IMG="${CONTAINER_REPO}/${{ inputs.tag }}:${{ github.sha }}"
         echo "push new image $IMG"
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
