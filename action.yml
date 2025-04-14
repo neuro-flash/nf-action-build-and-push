@@ -53,8 +53,8 @@ runs:
           # Collect build parameters
           DOCKER_BUILD_CMD="docker buildx build --tag \"${GCP_NAME}\" --file ${{ inputs.dockerfile }}"
 
-          if [ -n "${{ inputs.useSshAgent }}" ]; then
-            # Add --ssh flag if SSH_AUTH_SOCK is set
+          if [ "${{ inputs.useSshAgent }}" == "true" ]; then
+            # Output a warning if SSH agent should be attached, but SSH_AUTH_SOCK is not set
             if [ -z "$SSH_AUTH_SOCK" ]; then
               echo "WARNING: SSH_AUTH_SOCK is not set. Using --ssh might fail."
             fi
