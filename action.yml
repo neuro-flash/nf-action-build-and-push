@@ -19,6 +19,10 @@ inputs:
     description: 'Tag for the docker image; default: all'
     required: false
     default: 'all'
+  useSshAgent:
+    description: 'Use SSH agent for build; default: "true"'
+    required: false
+    default: 'true'
 runs:
   using: "composite"
   steps:
@@ -31,6 +35,7 @@ runs:
       env:
         GCP_REGION: ${{ inputs.region }}
         GCP_NAME: ${{ inputs.serviceName }}
+      # language=bash
       run: |
         echo "Authenticate for docker"
         export BASE_REPO=${GCP_REGION}-docker.pkg.dev
@@ -45,9 +50,20 @@ runs:
         echo "push new image $IMG"
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
-          docker buildx build --tag "${GCP_NAME}" --ssh default --file ${{ inputs.dockerfile }} .
+          if [ -n "${{ inputs.useSshAgent }}" ]; then
+            # Build with --ssh flag only if SSH_AUTH_SOCK is set
+            if [ -z "$SSH_AUTH_SOCK" ]; then
+              echo "WARNING: SSH_AUTH_SOCK is not set. Using --ssh might fail."
+            fi
+        
+            docker buildx build --tag "${GCP_NAME}" --ssh default --file ${{ inputs.dockerfile }} .
+          else
+            docker buildx build --tag "${GCP_NAME}" --file ${{ inputs.dockerfile }} .
+          fi
+
+        
           docker tag "${GCP_NAME}" "$IMG"
           docker push "$IMG"
-        fi  
+        fi
       
-
+        
