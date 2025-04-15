@@ -59,6 +59,10 @@ runs:
             fi
             DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --ssh default"
           fi
+        
+          echo "DEBUG: Dockerfile path: ${{ inputs.dockerfile }}"
+          echo "DEBUG: Dockerfile content:"
+          cat ${{ inputs.dockerfile }}
 
           # Execute build command
           # Note: The final dot (.) is important as it specifies the build context
