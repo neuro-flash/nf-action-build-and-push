@@ -47,7 +47,6 @@ runs:
         echo "Build and push Docker images"
         export DOCKER_BUILDKIT=1
         export IMG="${CONTAINER_REPO}/${{ inputs.tag }}:${{ github.sha }}"
-        echo "push new image $IMG"
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
           # Collect build parameters
@@ -63,8 +62,12 @@ runs:
 
           # Execute build command
           # Note: The final dot (.) is important as it specifies the build context
+          echo "Building Docker image with command: $DOCKER_BUILD_CMD ."
           eval $DOCKER_BUILD_CMD .
 
+          echo "Push new image: $IMG"
           docker tag "${GCP_NAME}" "$IMG"
           docker push "$IMG"
+        else
+          echo "Image already exists: $IMG"
         fi
