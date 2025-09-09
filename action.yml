@@ -58,7 +58,8 @@ runs:
         export IMG="${CONTAINER_REPO}/${{ inputs.tag }}:${{ github.sha }}"
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
-          # Collect build parameters
+          # needed to enable caching, without it we can't use cache-to and cache-from
+          docker buildx create --name cacheable --driver docker-container --use
           DOCKER_BUILD_CMD="docker buildx build --tag \"${GCP_NAME}\" --file ${{ inputs.dockerfile }} --cache-to type=local,dest=${{ github.workspace }}/.buildx-cache --cache-from type=local,src=${{ github.workspace }}/.buildx-cache"
 
           if [ "${{ inputs.sshKey }}" != "" ]; then
