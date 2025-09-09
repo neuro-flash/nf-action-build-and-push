@@ -34,7 +34,7 @@ runs:
     - name: Cache Docker layers
       uses: actions/cache@v3
       with:
-        path: /tmp/.buildx-cache
+        path: ${{ github.workspace }}/.buildx-cache
         key: ${{ runner.os }}-docker-${{ github.sha }}
         restore-keys: |
           ${{ runner.os }}-docker-
@@ -59,7 +59,7 @@ runs:
         
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
           # Collect build parameters
-          DOCKER_BUILD_CMD="docker buildx build --tag \"${GCP_NAME}\" --file ${{ inputs.dockerfile }}"
+          DOCKER_BUILD_CMD="docker buildx build --tag \"${GCP_NAME}\" --file ${{ inputs.dockerfile }} --cache-to type=local,dest=${{ github.workspace }}/.buildx-cache --cache-from type=local,src=${{ github.workspace }}/.buildx-cache"
 
           if [ "${{ inputs.sshKey }}" != "" ]; then
             echo "building docker image with ssh key"
