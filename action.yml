@@ -19,10 +19,10 @@ inputs:
     description: 'Tag for the docker image; default: all'
     required: false
     default: 'all'
-  useSshAgent:
-    description: 'Use SSH agent for build; default: "true"'
+  sshKey:
+    description: 'pass in an ssh key to the docker build'
     required: false
-    default: 'true'
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -52,16 +52,12 @@ runs:
           # Collect build parameters
           DOCKER_BUILD_CMD="docker buildx build --tag \"${GCP_NAME}\" --file ${{ inputs.dockerfile }}"
 
-          if [ "${{ inputs.useSshAgent }}" == "true" ]; then
-            # Output a warning if SSH agent should be attached, but SSH_AUTH_SOCK is not set
-            if [ -z "$SSH_AUTH_SOCK" ]; then
-              echo "WARNING: SSH_AUTH_SOCK is not set. Using --ssh might fail."
-            fi
-            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --ssh default"
+          if [ "${{ inputs.sshKey }}" != "" ]; then
+            export SSH_KEY="${{ inputs.sshKey }}"
+            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,env=SSH_KEY"
           fi
         
           # Execute build command
-          # Note: The final dot (.) is important as it specifies the build context
           echo "Building Docker image with command: $DOCKER_BUILD_CMD ."
           eval $DOCKER_BUILD_CMD .
 
