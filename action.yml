@@ -54,9 +54,9 @@ runs:
 
           if [ "${{ inputs.sshKey }}" != "" ]; then
             echo "building docker image with ssh key"
-            echo "${{ inputs.sshKey }}" > /tmp/.key
-            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,src=/tmp/.key"
-            rm /tmp/.key
+            echo "${{ inputs.sshKey }}" > ${HOME}/.ssh_key
+            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,src=$HOME/.ssh_key"
+            rm ${HOME}/.ssh_key
           fi
         
           # Execute build command
