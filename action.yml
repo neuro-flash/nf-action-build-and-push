@@ -53,8 +53,10 @@ runs:
           DOCKER_BUILD_CMD="docker buildx build --tag \"${GCP_NAME}\" --file ${{ inputs.dockerfile }}"
 
           if [ "${{ inputs.sshKey }}" != "" ]; then
-            export SSH_KEY="${{ inputs.sshKey }}"
-            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,env=SSH_KEY"
+            echo "building docker image with ssh key"
+            echo "${{ inputs.sshKey }}" > /tmp/.key
+            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,src=/tmp/.key"
+            rm /tmp/.key
           fi
         
           # Execute build command
