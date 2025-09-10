@@ -61,7 +61,7 @@ runs:
         if ! gcloud container images describe $IMG > /dev/null 2>&1; then
           # needed to enable caching, without it we can't use cache-to and cache-from
           docker buildx create --name cacheable --driver docker-container --use
-          DOCKER_BUILD_CMD="docker buildx build --tag \"${IMG}\" --push --file ${{ inputs.dockerfile }} --cache-to type=local,dest=${{ github.workspace }}/.buildx-cache --cache-from type=local,src=${{ github.workspace }}/.buildx-cache"
+          DOCKER_BUILD_CMD="docker buildx build --tag \"${IMG}\" --push --file ${{ inputs.dockerfile }} --cache-to type=local,dest=${{ github.workspace }}/.buildx-cache-dst --cache-from type=local,src=${{ github.workspace }}/.buildx-cache"
 
           if [ "${{ inputs.sshKey }}" != "" ]; then
             echo "building docker image with ssh key"
@@ -72,6 +72,8 @@ runs:
           # Execute build command
           echo "Building and pushing Docker image with command: $DOCKER_BUILD_CMD ."
           eval $DOCKER_BUILD_CMD .
+          rm -rf ${{ github.workspace }}/.buildx-cache
+          mv ${{ github.workspace }}/.buildx-cache-dst ${{ github.workspace }}/.buildx-cache
         else
           echo "Image already exists: $IMG"
         fi
