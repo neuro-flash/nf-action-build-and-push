@@ -20,7 +20,7 @@ inputs:
     default: 'all'
   # ===== end GCP =====
   scwSecretKey:
-    description: 'Scaleway secret key with push access to the registries of all envs; when set, the image is pushed to rg.{scwRegion}.scw.cloud/nf-{serviceName}-{env}/{serviceName}:{sha} for dev, qa and prod'
+    description: 'Scaleway secret key with push access to the registries of all envs; when set, the image is pushed to rg.{scwRegion}.scw.cloud/{serviceName}-{env}/main:{sha} for dev, qa and prod'
     required: false
     default: ''
   scwRegion:
@@ -117,7 +117,7 @@ runs:
           # to all of them right away. This saves time: we already have the image here, whereas copying it on deploy
           # would need to download it from one registry and re-upload it to the other.
           for SCW_ENV in dev qa prod; do
-            IMAGES+=("${SCW_REGISTRY}/nf-${NAME}-${SCW_ENV}/${NAME}:${{ github.sha }}")
+            IMAGES+=("${SCW_REGISTRY}/${NAME}-${SCW_ENV}/main:${{ github.sha }}")
           done
         fi
 
