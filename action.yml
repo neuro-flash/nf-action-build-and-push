@@ -50,6 +50,16 @@ inputs:
     description: 'Enable Docker layer caching via GitHub Actions cache (type=gha). Opt-in to avoid cache overhead for projects that do not benefit.'
     required: false
     default: 'false'
+  # Lets services try out which way of pushing the image to all registries is fastest. Once we know, keep only the
+  # fastest variant and remove this input.
+  pushVariant:
+    description: >-
+      How the images are pushed, used to find out which variant is fastest for different kinds of images (frontend, python, golang, legacy):
+      buildx (buildx pushes the tags one after another) |
+      parallel (load the image into the local docker daemon, then docker push all tags in parallel; depending on the runner's docker image store, layers may be compressed again for every push) |
+      skopeo (export the image as OCI layout, then skopeo copy it to all tags in parallel; layers are compressed only once, requires skopeo, installed via apt if missing)
+    required: false
+    default: 'buildx'
 runs:
   using: "composite"
   steps:
@@ -69,9 +79,15 @@ runs:
         NAME: ${{ inputs.serviceName }}
         SCW_SECRET_KEY: ${{ inputs.scwSecretKey }}
         SCW_REGION: ${{ inputs.scwRegion }}
+        PUSH_VARIANT: ${{ inputs.pushVariant }}
       # language=bash
       run: |
         set -e
+        case "${PUSH_VARIANT}" in
+          buildx|parallel|skopeo) ;;
+          *) echo "pushVariant must be buildx, parallel or skopeo, got '${PUSH_VARIANT}'"; exit 1 ;;
+        esac
+
         # ===== GCP: delete once GCP is shut down (keep the Scaleway check) =====
         if [ -z "${GCP_KEY}" ] && [ -z "${SCW_SECRET_KEY}" ]; then
           echo "Either key (GCP) or scwSecretKey (Scaleway) is required"
@@ -115,6 +131,7 @@ runs:
         done
 
         if [ ${#PUSH[@]} -eq 0 ]; then
+        echo "all images already exists, skipping build"
           exit 0
         fi
 
@@ -127,8 +144,21 @@ runs:
         export DOCKER_BUILDKIT=1
         # needed to enable caching, without it we can't use cache-to and cache-from
         docker buildx create --name cacheable --driver docker-container --use
-        # --load instead of --push: buildx pushes multiple tags one after another, we push them in parallel below
-        DOCKER_BUILD_CMD="docker buildx build ${TAGS} --load --file \"${{ inputs.dockerfile }}\""
+        # buildx pushes multiple tags one after another, the other variants push the tags in parallel below
+        if [ "${PUSH_VARIANT}" == "parallel" ]; then
+          OUTPUT="${TAGS} --load"
+        elif [ "${PUSH_VARIANT}" == "skopeo" ]; then
+          if ! command -v skopeo > /dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+          fi
+          OCI_DIR="${RUNNER_TEMP}/oci-image"
+          rm -rf "${OCI_DIR}"
+          # no tags, otherwise the OCI layout contains one entry per tag and skopeo can't pick the image
+          OUTPUT="--output type=oci,dest=\"${OCI_DIR}\",tar=false"
+        else
+          OUTPUT="${TAGS} --push"
+        fi
+        DOCKER_BUILD_CMD="docker buildx build ${OUTPUT} --file \"${{ inputs.dockerfile }}\""
 
         if [ "${{ inputs.sshKey }}" != "" ]; then
           echo "building docker image with ssh key as secret"
@@ -149,20 +179,29 @@ runs:
 
         # Execute build command
         echo "Building Docker image with command: $DOCKER_BUILD_CMD"
+        START=${SECONDS}
         eval $DOCKER_BUILD_CMD
 
-        echo "Push Docker images in parallel"
-        PIDS=()
-        for IMG in "${PUSH[@]}"; do
-          echo "Pushing ${IMG}"
-          docker push --quiet "${IMG}" &
-          PIDS+=($!)
-        done
-        FAILED=0
-        for PID in "${PIDS[@]}"; do
-          wait "${PID}" || FAILED=1
-        done
-        if [ "${FAILED}" != "0" ]; then
-          echo "Pushing at least one image failed"
-          exit 1
+        if [ "${PUSH_VARIANT}" != "buildx" ]; then
+          echo "Push Docker images in parallel"
+          PIDS=()
+          for IMG in "${PUSH[@]}"; do
+            echo "Pushing ${IMG}"
+            if [ "${PUSH_VARIANT}" == "skopeo" ]; then
+              # reads the registry credentials from the docker config written by docker login / gcloud above
+              skopeo copy --quiet "oci:${OCI_DIR}" "docker://${IMG}" &
+            else
+              docker push --quiet "${IMG}" &
+            fi
+            PIDS+=($!)
+          done
+          FAILED=0
+          for PID in "${PIDS[@]}"; do
+            wait "${PID}" || FAILED=1
+          done
+          if [ "${FAILED}" != "0" ]; then
+            echo "Pushing at least one image failed"
+            exit 1
+          fi
         fi
+        echo "Build and push with pushVariant '${PUSH_VARIANT}' took $(( SECONDS - START ))s"
