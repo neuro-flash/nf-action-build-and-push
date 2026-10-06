@@ -1,16 +1,35 @@
+# GCP is being replaced with Scaleway. Everything between the "GCP: delete once GCP is shut down" markers can be
+# removed once GCP is gone. Since our version tags on this action are mutable, we can then move the tags that services
+# use onto the GCP-free version instead of touching every repository (leftover `key`/`region`/`tag` inputs in
+# workflows only produce an "Unexpected input" warning).
 name: 'Build and push'
-description: 'Build and push Docker image to GCP'
+description: 'Build and push Docker image to GCP and/or Scaleway'
 inputs:
+  # ===== GCP: delete once GCP is shut down =====
   key:
-    description: 'GCP service key base64 encoded'
-    required: true
+    description: 'GCP service key base64 encoded; leave empty to skip pushing to GCP (deprecated: replaced with scaleway)'
+    required: false
+    default: ''
+  region:
+    description: 'GCP region (deprecated: replaced with scaleway)'
+    required: false
+    default: 'europe-west4'
+  tag:
+    description: 'Tag for the GCP docker image; default: all (deprecated: replaced with scaleway)'
+    required: false
+    default: 'all'
+  # ===== end GCP =====
+  scwSecretKey:
+    description: 'Scaleway secret key with push access to the registries of all envs; when set, the image is pushed to rg.{scwRegion}.scw.cloud/{serviceName}-{env}/main:{sha} for dev, qa and prod'
+    required: false
+    default: ''
+  scwRegion:
+    description: 'Scaleway region'
+    required: false
+    default: 'nl-ams'
   serviceName:
     description: 'name of the service'
     required: true
-  region:
-    description: 'GCP region'
-    required: false
-    default: 'europe-west4'
   dockerfile:
     description: 'Relative path to the dockerfile; default: ./Dockerfile'
     required: false
@@ -19,10 +38,6 @@ inputs:
     description: 'Docker build context directory; default: .'
     required: false
     default: '.'
-  tag:
-    description: 'Tag for the docker image; default: all'
-    required: false
-    default: 'all'
   sshKey:
     description: 'Pass an SSH key as a build secret (--secret). Dockerfile must use --mount=type=secret,id=sshkey.'
     required: false
@@ -35,58 +50,158 @@ inputs:
     description: 'Enable Docker layer caching via GitHub Actions cache (type=gha). Opt-in to avoid cache overhead for projects that do not benefit.'
     required: false
     default: 'false'
+  # Lets services try out which way of pushing the image to all registries is fastest. Once we know, keep only the
+  # fastest variant and remove this input.
+  pushVariant:
+    description: >-
+      How the images are pushed, used to find out which variant is fastest for different kinds of images (frontend, python, golang, legacy):
+      buildx (buildx pushes the tags one after another) |
+      parallel (load the image into the local docker daemon, then docker push all tags in parallel; depending on the runner's docker image store, layers may be compressed again for every push) |
+      skopeo (export the image as OCI layout, then skopeo copy it to all tags in parallel; layers are compressed only once, requires skopeo, installed via apt if missing)
+    required: false
+    default: 'buildx'
 runs:
   using: "composite"
   steps:
+    # ===== GCP: delete once GCP is shut down =====
     - name: Set up Cloud SDK
+      if: inputs.key != ''
       uses: google-github-actions/setup-gcloud@v3
       with:
         project_id: nf-artifact-repositories
+    # ===== end GCP =====
 
     - name: build and push docker image
       shell: bash
       env:
+        GCP_KEY: ${{ inputs.key }}
         GCP_REGION: ${{ inputs.region }}
-        GCP_NAME: ${{ inputs.serviceName }}
+        NAME: ${{ inputs.serviceName }}
+        SCW_SECRET_KEY: ${{ inputs.scwSecretKey }}
+        SCW_REGION: ${{ inputs.scwRegion }}
+        PUSH_VARIANT: ${{ inputs.pushVariant }}
       # language=bash
       run: |
         set -e
-        echo "Authenticate for docker"
-        export BASE_REPO=${GCP_REGION}-docker.pkg.dev
-        export CONTAINER_REPO=${BASE_REPO}/nf-artifact-repositories/${GCP_NAME}
-        echo "Authenticating with Google Cloud for project nf-artifact-repositories and docker '${BASE_REPO}'"
-        echo ${{ inputs.key }} | base64 --decode > ${HOME}/gcloud-service-key.json
-        gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
-        gcloud auth configure-docker --quiet $BASE_REPO
-        echo "Build and push Docker images"
-        export DOCKER_BUILDKIT=1
-        export IMG="${CONTAINER_REPO}/${{ inputs.tag }}:${{ github.sha }}"
-        
-        if ! gcloud container images describe $IMG > /dev/null 2>&1; then
-          # needed to enable caching, without it we can't use cache-to and cache-from
-          docker buildx create --name cacheable --driver docker-container --use
-          DOCKER_BUILD_CMD="docker buildx build --tag \"${IMG}\" --push --file \"${{ inputs.dockerfile }}\""
+        case "${PUSH_VARIANT}" in
+          buildx|parallel|skopeo) ;;
+          *) echo "pushVariant must be buildx, parallel or skopeo, got '${PUSH_VARIANT}'"; exit 1 ;;
+        esac
 
-          if [ "${{ inputs.sshKey }}" != "" ]; then
-            echo "building docker image with ssh key as secret"
-            echo "${{ inputs.sshKey }}" > ${HOME}/.ssh_key
-            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,src=$HOME/.ssh_key"
-          fi
-
-          if [ "${{ inputs.useSshAgent }}" == "true" ]; then
-            echo "forwarding SSH agent into build"
-            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --ssh default"
-          fi
-
-          if [ "${{ inputs.dockerCache }}" == "true" ]; then
-            DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --cache-from type=gha --cache-to type=gha,mode=max"
-          fi
-
-          DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD \"${{ inputs.context }}\""
-
-          # Execute build command
-          echo "Building and pushing Docker image with command: $DOCKER_BUILD_CMD"
-          eval $DOCKER_BUILD_CMD
-        else
-          echo "Image already exists: $IMG"
+        # ===== GCP: delete once GCP is shut down (keep the Scaleway check) =====
+        if [ -z "${GCP_KEY}" ] && [ -z "${SCW_SECRET_KEY}" ]; then
+          echo "Either key (GCP) or scwSecretKey (Scaleway) is required"
+          exit 1
         fi
+        # ===== end GCP =====
+
+        IMAGES=()
+
+        # ===== GCP: delete once GCP is shut down =====
+        if [ -n "${GCP_KEY}" ]; then
+          export BASE_REPO=${GCP_REGION}-docker.pkg.dev
+          export CONTAINER_REPO=${BASE_REPO}/nf-artifact-repositories/${NAME}
+          echo "Authenticating with Google Cloud for project nf-artifact-repositories and docker '${BASE_REPO}'"
+          echo "${GCP_KEY}" | base64 --decode > ${HOME}/gcloud-service-key.json
+          gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
+          gcloud auth configure-docker --quiet $BASE_REPO
+          IMAGES+=("${CONTAINER_REPO}/${{ inputs.tag }}:${{ github.sha }}")
+        fi
+        # ===== end GCP =====
+
+        if [ -n "${SCW_SECRET_KEY}" ]; then
+          export SCW_REGISTRY=rg.${SCW_REGION}.scw.cloud
+          echo "Authenticating with Scaleway registry '${SCW_REGISTRY}'"
+          echo "${SCW_SECRET_KEY}" | docker login "${SCW_REGISTRY}" -u nologin --password-stdin
+          # Every env has its own registry (containers can only pull from their own project), so the image is pushed
+          # to all of them right away. This saves time: we already have the image here, whereas copying it on deploy
+          # would need to download it from one registry and re-upload it to the other.
+          for SCW_ENV in dev qa prod; do
+            IMAGES+=("${SCW_REGISTRY}/${NAME}-${SCW_ENV}/main:${{ github.sha }}")
+          done
+        fi
+
+        PUSH=()
+        for IMG in "${IMAGES[@]}"; do
+          if docker buildx imagetools inspect "${IMG}" > /dev/null 2>&1; then
+            echo "Image already exists: ${IMG}"
+          else
+            PUSH+=("${IMG}")
+          fi
+        done
+
+        if [ ${#PUSH[@]} -eq 0 ]; then
+        echo "all images already exists, skipping build"
+          exit 0
+        fi
+
+        TAGS=""
+        for IMG in "${PUSH[@]}"; do
+          TAGS="${TAGS} --tag \"${IMG}\""
+        done
+
+        echo "Build Docker image"
+        export DOCKER_BUILDKIT=1
+        # needed to enable caching, without it we can't use cache-to and cache-from
+        docker buildx create --name cacheable --driver docker-container --use
+        # buildx pushes multiple tags one after another, the other variants push the tags in parallel below
+        if [ "${PUSH_VARIANT}" == "parallel" ]; then
+          OUTPUT="${TAGS} --load"
+        elif [ "${PUSH_VARIANT}" == "skopeo" ]; then
+          if ! command -v skopeo > /dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
+          fi
+          OCI_DIR="${RUNNER_TEMP}/oci-image"
+          rm -rf "${OCI_DIR}"
+          # no tags, otherwise the OCI layout contains one entry per tag and skopeo can't pick the image
+          OUTPUT="--output type=oci,dest=\"${OCI_DIR}\",tar=false"
+        else
+          OUTPUT="${TAGS} --push"
+        fi
+        DOCKER_BUILD_CMD="docker buildx build ${OUTPUT} --file \"${{ inputs.dockerfile }}\""
+
+        if [ "${{ inputs.sshKey }}" != "" ]; then
+          echo "building docker image with ssh key as secret"
+          echo "${{ inputs.sshKey }}" > ${HOME}/.ssh_key
+          DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --secret id=sshkey,src=$HOME/.ssh_key"
+        fi
+
+        if [ "${{ inputs.useSshAgent }}" == "true" ]; then
+          echo "forwarding SSH agent into build"
+          DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --ssh default"
+        fi
+
+        if [ "${{ inputs.dockerCache }}" == "true" ]; then
+          DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD --cache-from type=gha --cache-to type=gha,mode=max"
+        fi
+
+        DOCKER_BUILD_CMD="$DOCKER_BUILD_CMD \"${{ inputs.context }}\""
+
+        # Execute build command
+        echo "Building Docker image with command: $DOCKER_BUILD_CMD"
+        START=${SECONDS}
+        eval $DOCKER_BUILD_CMD
+
+        if [ "${PUSH_VARIANT}" != "buildx" ]; then
+          echo "Push Docker images in parallel"
+          PIDS=()
+          for IMG in "${PUSH[@]}"; do
+            echo "Pushing ${IMG}"
+            if [ "${PUSH_VARIANT}" == "skopeo" ]; then
+              # reads the registry credentials from the docker config written by docker login / gcloud above
+              skopeo copy --quiet "oci:${OCI_DIR}" "docker://${IMG}" &
+            else
+              docker push --quiet "${IMG}" &
+            fi
+            PIDS+=($!)
+          done
+          FAILED=0
+          for PID in "${PIDS[@]}"; do
+            wait "${PID}" || FAILED=1
+          done
+          if [ "${FAILED}" != "0" ]; then
+            echo "Pushing at least one image failed"
+            exit 1
+          fi
+        fi
+        echo "Build and push with pushVariant '${PUSH_VARIANT}' took $(( SECONDS - START ))s"
