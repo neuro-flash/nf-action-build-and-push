@@ -20,9 +20,13 @@ inputs:
     default: 'all'
   # ===== end GCP =====
   scwSecretKey:
-    description: 'Scaleway secret key with push access to the registries of all envs; when set, the image is pushed to rg.{scwRegion}.scw.cloud/{serviceName}-{env}/main:{sha} for dev, qa and prod'
+    description: 'Scaleway secret key with push access to the registries of all envs; when set, the image is pushed to rg.{scwRegion}.scw.cloud/{serviceName}-{env}/main:{sha} for every env in environments'
     required: false
     default: ''
+  environments:
+    description: 'Comma-separated Scaleway envs to push the image to (dev, qa, prod); images that already exist are skipped'
+    required: false
+    default: 'dev,qa,prod'
   scwRegion:
     description: 'Scaleway region'
     required: false
@@ -79,6 +83,7 @@ runs:
         NAME: ${{ inputs.serviceName }}
         SCW_SECRET_KEY: ${{ inputs.scwSecretKey }}
         SCW_REGION: ${{ inputs.scwRegion }}
+        ENVIRONMENTS: ${{ inputs.environments }}
         PUSH_VARIANT: ${{ inputs.pushVariant }}
       # language=bash
       run: |
@@ -116,7 +121,11 @@ runs:
           # Every env has its own registry (containers can only pull from their own project), so the image is pushed
           # to all of them right away. This saves time: we already have the image here, whereas copying it on deploy
           # would need to download it from one registry and re-upload it to the other.
-          for SCW_ENV in dev qa prod; do
+          for SCW_ENV in ${ENVIRONMENTS//,/ }; do
+            case "${SCW_ENV}" in
+              dev|qa|prod) ;;
+              *) echo "environments must only contain dev, qa or prod, got '${SCW_ENV}'"; exit 1 ;;
+            esac
             IMAGES+=("${SCW_REGISTRY}/${NAME}-${SCW_ENV}/main:${{ github.sha }}")
           done
         fi
@@ -131,7 +140,7 @@ runs:
         done
 
         if [ ${#PUSH[@]} -eq 0 ]; then
-        echo "all images already exists, skipping build"
+          echo "All images already exist, skipping build"
           exit 0
         fi
 
