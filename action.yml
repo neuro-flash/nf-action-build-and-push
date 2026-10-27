@@ -121,7 +121,11 @@ runs:
           # Every env has its own registry (containers can only pull from their own project), so the image is pushed
           # to all of them right away. This saves time: we already have the image here, whereas copying it on deploy
           # would need to download it from one registry and re-upload it to the other.
-          for SCW_ENV in ${ENVIRONMENTS//,/ }; do
+          IFS=',' read -ra SCW_ENVS <<< "${ENVIRONMENTS//[[:space:]]/}"
+          if [ ${#SCW_ENVS[@]} -eq 0 ]; then
+            echo "environments must contain at least one of dev, qa or prod"; exit 1
+          fi
+          for SCW_ENV in "${SCW_ENVS[@]}"; do
             case "${SCW_ENV}" in
               dev|qa|prod) ;;
               *) echo "environments must only contain dev, qa or prod, got '${SCW_ENV}'"; exit 1 ;;
